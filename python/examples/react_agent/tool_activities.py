@@ -1,25 +1,28 @@
-"""Location and weather tools for the ReAct agent, as harness activity tools.
+"""Location and weather tools, as harness activity tools.
 
 Four durable, activity-backed tools (``@agent.activity_tool_defn``) that call real public APIs
 over httpx. Because they do network I/O they run as Temporal activities, never inline in the
-workflow. Each is adapted onto the OpenAI Agents SDK in ``workflow.py`` via
-``as_openai_agent_tools``, so the harness still owns the approval gate and each tool's
-``tool_start`` / ``tool_end`` / ``tool_error`` events; the worker registers each activity body
-by handing ``ALL_TOOLS`` to ``AgentHarnessPlugin(tools=...)`` (see ``worker.py``).
+workflow. The ReAct agent adapts each onto the OpenAI Agents SDK in ``workflow.py`` via
+``as_openai_agent_tools``; the auto-mode travel agent (``examples/auto_mode``) exposes the same
+four as Code Mode host functions. Either way the harness owns the approval gate and each tool's
+``tool_start`` / ``tool_end`` / ``tool_error`` events; a worker registers each activity body by
+handing ``ALL_TOOLS`` to ``AgentHarnessPlugin(tools=...)``.
 
 The tool schema the model sees (name, description, parameters) is derived from each function's
 signature and docstring, so the first docstring line becomes the tool description and the
-``Args`` document the parameters.
+``Args`` document the parameters. Results are typed models rather than the APIs' raw JSON, so a
+Code Mode script can chain them (``get_location_info`` -> ``get_weather``) without parsing text.
 
 No ``from __future__ import annotations`` — activity args/returns cross Temporal's data
 converter, and stringized annotations can trip its type resolution (mirrors the Monty example's
-activities module). The types here are plain ``str`` / ``float``, so concrete annotations are fine.
+activities module).
 """
 
 from datetime import timedelta
 from urllib.parse import quote
 
 import httpx
+from pydantic import BaseModel
 from temporalio.workflow import ActivityConfig
 
 from temporal_agent_harness.harness import agent
@@ -28,6 +31,36 @@ from temporal_agent_harness.harness import agent
 _TOOL_TIMEOUT = timedelta(seconds=30)
 # Per-request HTTP timeout, comfortably under the activity's start-to-close.
 _HTTP_TIMEOUT = 5.0
+
+
+class Location(BaseModel):
+    """Where an IP address is, per ip-api.com."""
+
+    ip_address: str
+    city: str
+    region: str
+    country: str
+    latitude: float
+    longitude: float
+
+
+class Coordinates(BaseModel):
+    """The best Open-Meteo geocoding match for a place name."""
+
+    name: str
+    region: str
+    country: str
+    latitude: float
+    longitude: float
+
+
+class Weather(BaseModel):
+    """Current conditions from Open-Meteo."""
+
+    temperature_f: float
+    weather_code: int
+    """WMO weather interpretation code (0 clear, 1-3 partly cloudy to overcast, 61-65 rain...)."""
+    wind_mph: float
 
 
 @agent.activity_tool_defn(
@@ -44,7 +77,7 @@ async def get_ip_address() -> str:
 @agent.activity_tool_defn(
     activity_config=ActivityConfig(start_to_close_timeout=_TOOL_TIMEOUT),
 )
-async def get_location_info(ipaddress: str) -> str:
+async def get_location_info(ipaddress: str) -> Location:
     """Get the location for an IP address: city, region, country, latitude, and longitude.
 
     Args:
@@ -55,13 +88,23 @@ async def get_location_info(ipaddress: str) -> str:
             f"http://ip-api.com/json/{ipaddress}", timeout=_HTTP_TIMEOUT
         )
         response.raise_for_status()
-        return response.text
+        data = response.json()
+    if data.get("status") != "success":
+        raise ValueError(f"no location for {ipaddress!r}: {data.get('message', data)}")
+    return Location(
+        ip_address=data["query"],
+        city=data["city"],
+        region=data["regionName"],
+        country=data["country"],
+        latitude=data["lat"],
+        longitude=data["lon"],
+    )
 
 
 @agent.activity_tool_defn(
     activity_config=ActivityConfig(start_to_close_timeout=_TOOL_TIMEOUT),
 )
-async def get_coordinates(city: str) -> str:
+async def get_coordinates(city: str) -> Coordinates:
     """Get the latitude and longitude for a city name.
 
     Args:
@@ -71,14 +114,24 @@ async def get_coordinates(city: str) -> str:
     async with httpx.AsyncClient() as client:
         response = await client.get(url, timeout=_HTTP_TIMEOUT)
         response.raise_for_status()
-        return response.text
+        results = response.json().get("results")
+    if not results:
+        raise ValueError(f"no place named {city!r}")
+    match = results[0]
+    return Coordinates(
+        name=match["name"],
+        region=match.get("admin1", ""),
+        country=match.get("country", ""),
+        latitude=match["latitude"],
+        longitude=match["longitude"],
+    )
 
 
 @agent.activity_tool_defn(
     activity_config=ActivityConfig(start_to_close_timeout=_TOOL_TIMEOUT),
 )
-async def get_weather(latitude: float, longitude: float) -> str:
-    """Get current weather at a latitude/longitude: temperature (Fahrenheit), weather code, wind speed.
+async def get_weather(latitude: float, longitude: float) -> Weather:
+    """Get current weather at a latitude/longitude: temperature (°F), weather code, wind (mph).
 
     Args:
         latitude: Latitude of the location.
@@ -88,12 +141,17 @@ async def get_weather(latitude: float, longitude: float) -> str:
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={latitude}&longitude={longitude}"
         "&current=temperature_2m,weather_code,wind_speed_10m"
-        "&temperature_unit=fahrenheit"
+        "&temperature_unit=fahrenheit&wind_speed_unit=mph"
     )
     async with httpx.AsyncClient() as client:
         response = await client.get(url, timeout=_HTTP_TIMEOUT)
         response.raise_for_status()
-        return response.text
+        current = response.json()["current"]
+    return Weather(
+        temperature_f=current["temperature_2m"],
+        weather_code=current["weather_code"],
+        wind_mph=current["wind_speed_10m"],
+    )
 
 
 # The in-workflow tool dispatchers (what workflow.py adapts onto the SDK via

@@ -16,6 +16,7 @@ harness_pytest_test(
         "//python/examples/auto_mode:workflow",
         "//python/examples/monty:activities",
         "//python/examples/monty:trip_board",
+        "//python/examples/react_agent:tool_activities",
         "//python/tests:conftest",
     ],
 )

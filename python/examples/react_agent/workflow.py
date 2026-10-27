@@ -76,12 +76,15 @@ Use your tools to answer accurately rather than guessing. You can find the weath
    coordinates from the IP), then `get_weather`.
 Chain tools as needed — you will usually need more than one — and once you have enough
 information, reply in a sentence or two. `get_weather` returns the temperature in Fahrenheit, a
-weather code, and wind speed; summarize it in plain language.
+weather code, and wind speed in mph; summarize it in plain language.
 
-If a request is ambiguous or needs information only the user can give — which city they mean, or
-permission to use their current location — call `ask_user` with a clear question and use their
-answer to continue. Prefer asking over guessing when it matters. If the user's answer is not clear
-call `ask_user` again."""
+If a request is ambiguous or needs information only the user can give — which city they mean —
+call `ask_user` with a clear question and use their answer to continue. Prefer asking over
+guessing when it matters. If the user's answer is not clear call `ask_user` again.
+
+Some tools need the user's approval before they run. If a call is refused, don't retry it or ask
+about it with `ask_user`: say in your reply what you couldn't do, and that naming a city works
+without approval."""
 
 
 @agent.defn(name="ReactAgent")
@@ -93,9 +96,14 @@ class ReactAgentWorkflow:
         self._runner = AgentWorkflowRunner(
             config,
             stream=WorkflowStream(),
-            # No human-in-the-loop yet — don't gate tool calls (demo4-hitl will tighten this).
-            # A caller can still override per session via AgentConfig.approval_policy.
-            approval_policy_default=ToolApprovalPolicy.dangerously_skip_all(),
+            # Weather for a named city runs without asking; anything that reveals where the
+            # user is (get_ip_address, get_location_info) or reaches the F1 MCP server goes to
+            # a person first. A caller can still override per session via
+            # AgentConfig.approval_policy.
+            approval_policy_default=ToolApprovalPolicy(
+                auto_approve_inherently_safe=True,
+                auto_approve_tools=frozenset({"get_coordinates", "get_weather"}),
+            ),
         )
         # OpenAI conversation state, threaded across turns as the SDK's input-item list.
         self._conversation: list[TResponseInputItem] = []

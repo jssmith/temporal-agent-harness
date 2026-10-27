@@ -22,6 +22,7 @@ stream target — the streamed call raises unless you also set ``model_params.st
 Env vars (set in the repo-root .env.local — see .env.example):
     TEMPORAL_CONFIG_FILE / TEMPORAL_PROFILE   Temporal connection profile
     OPENAI_API_KEY                            required — the agent calls the OpenAI API
+    F1_MCP_SERVER_HOME                        required — built F1 MCP server checkout (README)
     REACT_AGENT_TASK_QUEUE                    task queue to poll (default: react-agent)
 """
 
@@ -63,13 +64,15 @@ async def main() -> None:
 
     task_queue = os.environ.get("REACT_AGENT_TASK_QUEUE", TASK_QUEUE)
     MCP_SERVER_NAME = "f1-data"
-    F1_MCP_SERVER_HOME = os.environ.get(
-        "F1_MCP_SERVER_HOME",
-        os.path.expanduser("~/Projects/Temporal/AI/MCP/f1-mcp-server"),
-    )
+    F1_MCP_SERVER_HOME = os.environ.get("F1_MCP_SERVER_HOME", "")
 
     if not os.environ.get("OPENAI_API_KEY"):
         sys.exit("error: OPENAI_API_KEY env var not set")
+    if not F1_MCP_SERVER_HOME:
+        sys.exit("error: F1_MCP_SERVER_HOME env var not set (see README: The F1 MCP server)")
+    for required in ("build/index.js", ".venv/bin/activate"):
+        if not os.path.exists(os.path.join(F1_MCP_SERVER_HOME, required)):
+            sys.exit(f"error: {F1_MCP_SERVER_HOME}/{required} not found; build the F1 server")
 
     def _f1_server_factory() -> MCPServerStdio:
         # The F1 server is Node.js but shells out to python3 for FastF1. Activating
@@ -85,6 +88,9 @@ async def main() -> None:
                 "args": ["-c", launch],
             },
             cache_tools_list=True,
+            # FastF1 downloads a whole session's data on a cold cache, far longer than the
+            # SDK's 5s default. Stays under the call-tool activity's 1 minute start-to-close.
+            client_session_timeout_seconds=55,
         )
 
     plugin = OpenAIAgentsPlugin(

@@ -8,6 +8,7 @@ task_queue = "auto-mode-agent"
 label = "Travel agent (Jev Auto mode)"
 schema = "AutoModeTravelAgent.schema.json"
 description = """
-The Monty conversational travel agent under AUTO MODE: each gated tool call is first judged
-by Jev against named criteria sets — lookups are approved, bookings are escalated to you, and
+The Monty conversational travel agent, with weather tools, under AUTO MODE: each gated tool
+call is first judged by Jev against named criteria sets — lookups and bookings for the trip's
+own traveller are approved, finding your location or booking for someone else comes to you, and
 anything Jev isn't sure about comes to you exactly as it would without auto mode."""

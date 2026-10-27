@@ -32,7 +32,7 @@ import asyncio
 from datetime import timedelta
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from temporalio import workflow
 from temporalio.contrib.workflow_streams import WorkflowStream
 from temporalio.workflow import ActivityConfig
@@ -55,6 +55,7 @@ with workflow.unsafe.imports_passed_through():
     from temporal_agent_harness.harness import agent
     from temporal_agent_harness.harness.agent_protocol import (
         AgentConfig,
+        AutoApprovalContext,
         MidTurn,
         TextMessage,
         TextReply,
@@ -63,6 +64,7 @@ with workflow.unsafe.imports_passed_through():
     from temporal_agent_harness.harness.agent_workflow import AgentWorkflowRunner
 
     from examples.monty import activities, trip_board
+    from examples.react_agent import tool_activities as weather
 
 
 # Its own queue, not Monty's: every worker on a queue must register the same workflow types.
@@ -111,16 +113,50 @@ _AUTO_APPROVAL_CRITERIA = agent.AutoApprovalCriteria(
     sets={
         "read_only": agent.AutoApprovalCriteriaSet(
             effect="Looks up flight, hotel or trip data and returns it. Books nothing.",
-            approve_when=("the call only searches or summarizes",),
+            approve_when=(
+                "the call searches flights or hotels, or summarizes bookings by their "
+                "confirmation codes",
+            ),
             escalate_when=("the arguments name a traveller the user never mentioned",),
+            # A lookup changes nothing, so a borderline approve is not worth interrupting
+            # the user over; the agent-wide 0.8 left trip summaries escalating at ~0.77.
+            min_confidence=0.6,
         ),
         "books_travel": agent.AutoApprovalCriteriaSet(
             effect=(
                 "Reserves a real flight or hotel in a traveller's name. Cannot be undone "
-                "from inside this system once the provider confirms it."
+                "from inside this system once the provider confirms it. "
+                "`agent_state.trips` lists the trips the user has set up, each with the "
+                "traveller it is for."
             ),
-            deny_when=("the traveller is not the person the user asked to book for",),
-            escalate_when=("anything is actually being booked",),
+            approve_when=(
+                "the passenger or guest is the traveller of a trip in `agent_state.trips`",
+            ),
+            escalate_when=(
+                "the passenger or guest is not the traveller of any trip in "
+                "`agent_state.trips`: the booking is for someone the user never set a trip "
+                "up for",
+            ),
+            # Every booking is irreversible, so the default ceiling would send each one to a
+            # person and the rules above would never decide anything. Who it is for is the line
+            # this operator draws.
+            escalate_if_irreversible_above=1.0,
+        ),
+        "public_lookup": agent.AutoApprovalCriteriaSet(
+            effect=(
+                "Looks up public coordinates or current weather for a place. Reveals nothing "
+                "about the user."
+            ),
+            approve_when=(
+                "the call looks up a place by name or by latitude/longitude",
+            ),
+        ),
+        "reveals_location": agent.AutoApprovalCriteriaSet(
+            effect=(
+                "Finds where the user physically is, from the public IP address of their "
+                "machine, and shares that address with a third-party lookup service."
+            ),
+            escalate_when=("always; only the user can agree to share where they are",),
         ),
         "cautious": agent.AutoApprovalCriteriaSet(
             effect="Unknown — nobody has written rules for this tool.",
@@ -136,6 +172,9 @@ _AUTO_APPROVAL_CRITERIA = agent.AutoApprovalCriteria(
             escalate_when=("The script will run an unbounded or very large number of actions.",),
             deny_when=("The script is guaranteed to be an invalid program.",),
             min_confidence=0.5,
+            # The script's effects are its host calls, and each is judged on its own, so how
+            # irreversible the script looks says nothing this gate should act on.
+            escalate_if_irreversible_above=1.0,
         ),
     },
     default="cautious",
@@ -146,16 +185,31 @@ _AUTO_APPROVAL_CRITERIA = agent.AutoApprovalCriteria(
         "get_trip_summary": "read_only",
         "book_flight": "books_travel",
         "book_hotel": "books_travel",
+        "get_coordinates": "public_lookup",
+        "get_weather": "public_lookup",
+        "get_ip_address": "reveals_location",
+        "get_location_info": "reveals_location",
     },
 )
 
 
 SYSTEM_INSTRUCTION = """\
 You are a friendly travel-booking assistant. You help users search and book flights and \
-hotels and assemble trip itineraries. You don't have these abilities directly — instead you \
-write small async Python scripts and run them with the `run_travel_code` tool, which exposes the \
-travel operations as async host functions your script calls. The tool's description gives the \
-exact host-function signatures and result shapes — follow them; index results with normal Python.
+hotels, assemble trip itineraries, and check the weather where they are or where they are going. \
+You don't have these abilities directly — instead you write small async Python scripts and run \
+them with the `run_travel_code` tool, which exposes the travel and weather operations as async \
+host functions your script calls. The tool's description gives the exact host-function \
+signatures and result shapes — follow them; index results with normal Python.
+
+Weather: for a named place, `get_coordinates` then `get_weather`. For "where I am", \
+`get_ip_address`, then `get_location_info` on that address, then `get_weather` on its \
+coordinates — all in one script. Summarize temperature (°F), conditions (from the WMO weather \
+code) and wind (mph) in a sentence. Weather questions are not trips: don't touch the trip board \
+for them.
+
+Some host calls need the user's approval before they run, and the user may refuse one. A \
+refused call raises in your script. Don't retry it: say in your reply what you couldn't do and \
+why.
 
 How to behave:
 - Converse naturally. Ask brief clarifying questions when you're missing something essential \
@@ -207,7 +261,9 @@ class AutoModeTravelAgentWorkflow:
             # human on every gated call by simply not enabling it — and a caller can impose
             # either posture per session via `AgentConfig.approval_policy`.
             auto_approval_criteria_default=_AUTO_APPROVAL_CRITERIA,
-            auto_mode_evaluator=jev_evaluator(),
+            # Jev sees the trips on the board, so `books_travel` can tell a booking for the
+            # trip's own traveller from one for somebody else.
+            auto_mode_evaluator=jev_evaluator(extra_state=self._trips_for_approval),
         )
         self._model: str = DEFAULT_MODEL
         # The whole conversation, sent as the input of every model call (see
@@ -220,7 +276,7 @@ class AutoModeTravelAgentWorkflow:
             # The travel tools plus the board tools, in one sandbox: a script can book a
             # flight and record it on the board without a round trip through the model, so
             # the board cannot drift from what was actually booked.
-            [*activities.ALL_TOOLS, *trip_board.BOARD_TOOLS],
+            [*activities.ALL_TOOLS, *weather.ALL_TOOLS, *trip_board.BOARD_TOOLS],
             name=CODE_MODE_TOOL_NAME,
             # Hidden from the model and from the generated stubs: the script names the
             # trip, never the state it lives in.
@@ -304,6 +360,21 @@ class AutoModeTravelAgentWorkflow:
             )
         )
 
+    def _trips_for_approval(self, ctx: AutoApprovalContext) -> dict[str, JsonValue]:
+        """The live trip board as Jev sees it: who each trip is for. Runs in-workflow on
+        every gated call, so it only reads the agent's own state."""
+        return {
+            "trips": [
+                {
+                    "trip_id": trip.trip_id,
+                    "description": trip.description,
+                    "traveler": trip.traveler,
+                    "status": trip.status,
+                }
+                for trip in self.trip_board.current.trips
+            ]
+        }
+
     # ------------------------------------------------------------------ chat loop
 
     async def _handle_chat_turn(self, gemini: AsyncClient, user_text: str) -> str:
@@ -314,11 +385,18 @@ class AutoModeTravelAgentWorkflow:
         ``InteractionConversation`` for why it is not chained by interaction id."""
         tools = [function_param(self._code_tool)]
         self._conversation.add_user_text(user_text)
+        # The model has no clock: without this, "November 20" comes back with whatever year it
+        # guesses. workflow.now() is the turn's deterministic time, so replay sees the same date.
+        today = workflow.now()
+        system_instruction = (
+            f"{SYSTEM_INSTRUCTION}\n\nToday's date is {today:%A, %B} {today.day}, {today.year}. "
+            "Dates the user gives without a year are the next such date from today."
+        )
         while True:
             stream = await gemini.interactions.create(
                 model=self._model,
                 input=self._conversation.steps,
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
                 tools=tools,
                 stream=True,
             )

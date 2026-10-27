@@ -48,6 +48,7 @@ from temporal_agent_harness.ai_sdks.google_genai_plugin import GoogleGenAIPlugin
 from temporal_agent_harness.plugin import AgentHarnessPlugin
 
 from examples.monty import activities
+from examples.react_agent import tool_activities as weather
 from examples.auto_mode.workflow import TASK_QUEUE, AutoModeTravelAgentWorkflow
 
 
@@ -82,7 +83,7 @@ async def main() -> None:
     #   * TypeSafePlugin     — the TypeSafe system_one activity that `jev_evaluator()` calls.
     #     Temporal owns retries, so the SDK client's own are off.
     #   * AgentHarnessPlugin — the large-payload offload converter, and the durable body of
-    #     every travel tool in ALL_TOOLS.
+    #     every travel and weather tool.
     connect_config = ClientConfig.load_client_connect_config()
     async with AsyncTypeSafeClient(
         api_key=typesafe_api_key, retry=RetryPolicy(max_retries=0)
@@ -92,7 +93,7 @@ async def main() -> None:
             plugins=[
                 GoogleGenAIPlugin(GeminiClient(api_key=gemini_api_key)),
                 TypeSafePlugin(typesafe),
-                AgentHarnessPlugin(tools=activities.ALL_TOOLS),
+                AgentHarnessPlugin(tools=[*activities.ALL_TOOLS, *weather.ALL_TOOLS]),
             ],
         )
 

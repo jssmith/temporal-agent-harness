@@ -26,6 +26,7 @@ py_library(
     deps = [
         "//python/temporal_agent_harness/harness:agent",
         "@pypi//httpx",
+        "@pypi//pydantic",
         "@pypi//temporalio",
     ],
 )

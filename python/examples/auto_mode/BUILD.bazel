@@ -10,6 +10,7 @@ harness_module_binary(
     deps = [
         ":workflow",
         "//python/examples/monty:activities",
+        "//python/examples/react_agent:tool_activities",
         "//python/temporal_agent_harness:plugin",
         "//python/temporal_agent_harness/ai_sdks/google_genai_plugin:__init__",
         "@pypi//google_genai",
@@ -27,6 +28,7 @@ py_library(
     deps = [
         "//python/examples/monty:activities",
         "//python/examples/monty:trip_board",
+        "//python/examples/react_agent:tool_activities",
         "//python/temporal_agent_harness/ai_sdks/google_genai_plugin:__init__",
         "//python/temporal_agent_harness/ai_sdks/jev:__init__",
         "//python/temporal_agent_harness/harness:agent",
@@ -42,8 +44,9 @@ harness_agent(
     name = "AutoModeTravelAgent",
     agent = "examples.auto_mode.workflow:AutoModeTravelAgentWorkflow",
     description = """
-The Monty conversational travel agent under AUTO MODE: each gated tool call is first judged
-by Jev against named criteria sets — lookups are approved, bookings are escalated to you, and
+The Monty conversational travel agent, with weather tools, under AUTO MODE: each gated tool
+call is first judged by Jev against named criteria sets — lookups and bookings for the trip's
+own traveller are approved, finding your location or booking for someone else comes to you, and
 anything Jev isn't sure about comes to you exactly as it would without auto mode.""",
     key = "auto-mode-travel",
     label = "Travel agent (Jev Auto mode)",

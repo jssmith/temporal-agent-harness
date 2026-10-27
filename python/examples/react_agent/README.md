@@ -21,7 +21,7 @@ Ask it a question and it chains tools to find the answer:
 | `get_ip_address` | icanhazip.com | The caller's public IP |
 | `get_location_info` | ip-api.com | City / country / lat-lon for an IP |
 | `get_coordinates` | Open-Meteo Geocoding | Lat-lon for a city name |
-| `get_weather` | Open-Meteo Forecast | Current temperature (°F), weather code, wind speed |
+| `get_weather` | Open-Meteo Forecast | Current temperature (°F), weather code, wind speed (mph) |
 | F1 tools | `f1-data` MCP server | Formula 1 schedules, results, and driver/constructor data |
 | `ask_user` | the human (callback tool) | Ask the user a clarifying question and use their answer |
 
@@ -62,9 +62,10 @@ Ask it a question and it chains tools to find the answer:
   (authorizing an action). Crucially, **fulfillment is decoupled from any UI** — it's a Temporal
   update (`provide_callback_result`), reachable over HTTP at `POST /api/callback-result`. Our
   terminal `client.py` is one such fulfiller; the packaged web UI does not implement one (see below).
-- **No approvals yet.** The approval policy is `dangerously_skip_all()` — tool calls run without a
-  human gate. A future HITL demo flips this to gate the harness-wrapped tools. (`ask_user` is marked
-  `inherently_safe`, so even then, *asking* a question is never itself gated.)
+- **Location needs approval.** Weather for a named city (`get_coordinates`, `get_weather`) runs
+  without asking. Anything that reveals where the user is (`get_ip_address`, `get_location_info`)
+  waits for a person to approve it in the console, as do the F1 MCP tools. `ask_user` is marked
+  `inherently_safe`, so *asking* a question is never itself gated.
 
 ## Layout
 
@@ -117,8 +118,8 @@ export F1_MCP_SERVER_HOME=/absolute/path/to/f1-mcp-server   # or set it in the r
 
 The worker (`worker.py`) launches it per the workshop:
 `bash -c "source $F1_MCP_SERVER_HOME/.venv/bin/activate && node $F1_MCP_SERVER_HOME/build/index.js"`.
-`F1_MCP_SERVER_HOME` defaults to `~/Projects/Temporal/AI/MCP/f1-mcp-server` if unset. Verify the
-exact steps against the workshop README linked above.
+`F1_MCP_SERVER_HOME` is required: the worker refuses to start if it is unset or the checkout has no
+`build/index.js` or `.venv`. Verify the exact steps against the workshop README linked above.
 
 Then, each in its own terminal:
 
