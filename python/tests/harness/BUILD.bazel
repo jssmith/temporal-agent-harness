@@ -346,3 +346,14 @@ harness_pytest_test(
         "@pypi//temporalio",
     ],
 )
+
+harness_pytest_test(
+    name = "test_sandbox_driver",
+    srcs = ["test_sandbox_driver.py"],
+    imports = ["../.."],
+    deps = [
+        "//python/temporal_agent_harness/harness/sandbox:__init__",
+        "//python/tests:conftest",
+        "@pypi//temporalio",
+    ],
+)

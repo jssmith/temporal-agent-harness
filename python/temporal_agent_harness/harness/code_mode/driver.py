@@ -15,13 +15,12 @@ hands them over, and keep running across steps until the script awaits them.
 
 === Replay-safe step limits ===
 
-A step that runs too long between host interactions is killed (see :mod:`.monty_stepper`). Whether that happens depends on the machine, so it must not be decided
-again on replay. When a step is aborted on its original run, the driver records a patch marker
-naming the script and step, and returns an error. On replay, it checks for that marker before
-running the step: if present, it returns the same error without running the step; if absent,
-the step completed originally and is re-run with only a generous backstop limit. A skipped step
-must leave no trace in what the workflow does next, so the script draws entropy from its own
-generator rather than the workflow's, and an error reply carries no stdout.
+A step that runs too long between host interactions is killed (see :mod:`.monty_stepper`).
+The batch loop and its replay-safe handling of aborted steps are the runtime-neutral
+:func:`~temporal_agent_harness.harness.sandbox.driver.drive`; on replay a step that completed
+originally is re-run with only a generous backstop limit. A skipped step must leave no trace in
+what the workflow does next, so the script draws entropy from its own generator rather than the
+workflow's, and an error reply carries no stdout.
 
 Sandbox-safe: this module never imports ``pydantic_monty`` at module scope. The stepping engine
 is imported through the sandbox's pass-through by :func:`load_stepper`, which ``code_mode_tool``
@@ -31,14 +30,13 @@ is retried until a worker with it picks the task up) instead of failing a tool c
 
 from __future__ import annotations
 
-import asyncio
 import builtins
 import inspect
 import json
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from types import ModuleType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, TypeAdapter
 from temporalio import workflow
@@ -63,8 +61,13 @@ with workflow.unsafe.imports_passed_through():
         fs_seed,
         perform,
     )
+    from temporal_agent_harness.harness.sandbox.driver import drive
+    from temporal_agent_harness.harness.sandbox.protocol import HostCall, Pending, Step
 
 _T = TypeVar("_T")
+
+# Names Code Mode's patch markers; changing it breaks replay of existing histories.
+_MARKER_PREFIX = "temporal-agent-harness/code-mode"
 
 
 def load_stepper() -> ModuleType:
@@ -87,6 +90,21 @@ def call_monty(fn: Callable[..., _T], *args: Any) -> _T:
     imports ``opentelemetry`` lazily, from native code, on its first run."""
     with workflow.unsafe.imports_passed_through():
         return fn(*args)
+
+
+class _PassedThrough:
+    """A Monty run whose steps go through :func:`call_monty`."""
+
+    def __init__(self, run: Any) -> None:
+        self._run = run
+        self.timed_out_error: str = run.timed_out_error
+        self.crashed_error: str = run.crashed_error
+
+    def start(self, *, replaying: bool) -> Step:
+        return call_monty(lambda: self._run.start(replaying=replaying))
+
+    def resume(self, results: Mapping[int, Any], *, replaying: bool) -> Step:
+        return call_monty(lambda: self._run.resume(results, replaying=replaying))
 
 
 def _to_sandbox(value: Any) -> Any:
@@ -149,34 +167,15 @@ class CodeModeDriver:
             mounts=self._mounts,
         )
 
-        step = self._step(script_id, 0, lambda replaying: run.start(replaying=replaying))
-        step_no = 0
-        running: dict[int, asyncio.Task[Any]] = {}
-        try:
-            while not step.done:
-                step_no += 1
-                # Start every call the step handed over, then wait for the ones it is blocked
-                # on, CONCURRENTLY — each host call is its own durable dispatch via run_tool, so
-                # each is independently approval-gated and publishes its own tool lifecycle. A
-                # call that fails is raised inside the script at its await, where the script may
-                # catch it; the rest of the batch still completes.
-                for call in [*step.started, *step.awaiting]:
-                    if call.call_id not in running:
-                        running[call.call_id] = asyncio.create_task(self._run_call(call, stepper))
-                outcomes = await asyncio.gather(
-                    *(running.pop(call.call_id) for call in step.awaiting), return_exceptions=True
-                )
-                results = {
-                    call.call_id: _script_outcome(outcome)
-                    for call, outcome in zip(step.awaiting, outcomes)
-                }
-                step = self._step(
-                    script_id, step_no, lambda replaying: run.resume(results, replaying=replaying)
-                )
-        finally:
-            # Calls the script made but never awaited before it ended.
-            for task in running.values():
-                task.cancel()
+        # Each host call is its own durable dispatch via run_tool, so each is independently
+        # approval-gated and publishes its own tool lifecycle.
+        step = await drive(
+            _PassedThrough(run),
+            self._run_call,
+            settle=_script_outcome,
+            run_id=script_id,
+            marker_prefix=_MARKER_PREFIX,
+        )
 
         if step.error:
             return f"Script error ({step.error})"
@@ -188,42 +187,13 @@ class CodeModeDriver:
         parts.append(f"result: {_render(step.output)!r}")
         return "\n".join(parts)
 
-    def _step(self, script_id: str, step_no: int, advance: Callable[[bool], Any]) -> Any:
-        """Run one step under the replay-safe limit described in the module docstring."""
-        timed_out_marker = f"temporal-agent-harness/code-mode/timed-out/{script_id}/{step_no}"
-        crashed_marker = f"temporal-agent-harness/code-mode/crashed/{script_id}/{step_no}"
-        stepper = load_stepper()
-        if workflow.unsafe.is_replaying():
-            if workflow.patched(timed_out_marker):
-                return stepper.Step(done=True, error=stepper.TIMED_OUT_ERROR)
-            if workflow.patched(crashed_marker):
-                return stepper.Step(done=True, error=stepper.CRASHED_ERROR)
-            step = call_monty(advance, True)
-            if step.aborted:
-                # The step completed on its original run, so this outcome cannot be returned.
-                # Fail the workflow task and let Temporal retry it.
-                raise RuntimeError(
-                    f"Code Mode script {script_id} step {step_no} completed on its original run "
-                    f"but not on replay: {step.error}"
-                )
-            return step
-
-        step = call_monty(advance, False)
-        if not step.aborted:
-            return step
-        workflow.patched(timed_out_marker if step.timed_out else crashed_marker)
-        workflow.logger.warning("code_mode: step %d aborted: %s", step_no, step.error)
-        if step.timed_out:
-            return stepper.Step(done=True, error=stepper.TIMED_OUT_ERROR)
-        return stepper.Step(done=True, error=stepper.CRASHED_ERROR)
-
-    async def _run_call(self, call: Any, stepper: ModuleType) -> Any:
-        if isinstance(call, stepper.Sleep):
-            await workflow.sleep(call.seconds)
-            return None
+    async def _run_call(self, call: Pending) -> Any:
         if isinstance(call, FileOp):
             return await self._run_file_op(call)
-        return await self._dispatch_host_call(call.function_name, call.args, call.kwargs)
+        host_call = cast(HostCall, call)
+        return await self._dispatch_host_call(
+            host_call.function_name, host_call.args, host_call.kwargs
+        )
 
     async def _run_file_op(self, op: FileOp) -> Any:
         """Carry out one file operation as ``fs_*`` tool calls against its mount's backend,

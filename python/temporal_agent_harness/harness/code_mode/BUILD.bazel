@@ -47,6 +47,8 @@ py_library(
         ":stubs",
         ":vfs",
         "//python/temporal_agent_harness/harness:agent_workflow",
+        "//python/temporal_agent_harness/harness/sandbox:driver",
+        "//python/temporal_agent_harness/harness/sandbox:protocol",
         "@pypi//pydantic",
         "@pypi//temporalio",
     ],
@@ -60,6 +62,7 @@ py_library(
     deps = [
         ":stubs",
         ":vfs",
+        "//python/temporal_agent_harness/harness/sandbox:protocol",
         "@pypi//pydantic_monty_client",
     ],
 )
