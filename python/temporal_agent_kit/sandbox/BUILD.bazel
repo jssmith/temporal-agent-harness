@@ -1,0 +1,30 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = [".."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":driver",
+        ":protocol",
+    ],
+)
+
+py_library(
+    name = "driver",
+    srcs = ["driver.py"],
+    imports = [".."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":protocol",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "protocol",
+    srcs = ["protocol.py"],
+    imports = [".."],
+    visibility = ["//python:__subpackages__"],
+)

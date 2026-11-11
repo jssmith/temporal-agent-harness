@@ -400,3 +400,14 @@ agent_kit_pytest_test(
         "@pypi//temporalio",
     ],
 )
+
+agent_kit_pytest_test(
+    name = "test_sandbox_driver",
+    srcs = ["test_sandbox_driver.py"],
+    imports = [".."],
+    deps = [
+        ":conftest",
+        "//python/temporal_agent_kit/sandbox:__init__",
+        "@pypi//temporalio",
+    ],
+)
