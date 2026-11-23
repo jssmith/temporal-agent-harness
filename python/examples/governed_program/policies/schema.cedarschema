@@ -1,0 +1,53 @@
+// Dogwood action schema for the governed-program demo, in the form of the temporal-untrusted-workers
+// Dogwood verifier's own (verifiers/dogwood/policies/schema.cedarschema).
+//
+//   principal: Temporal::Worker::"<subject>", the guest worker's identity
+//   action:    Temporal::Action::"governed-program-tools/<activity>", a trusted activity the
+//              workflow template scheduled (a tool call)
+//   resource:  Temporal::TaskQueue::"<queue>", the guest's task queue
+//
+// The parameters are the request models of examples/governed_program/models.py: each activity
+// takes one JSON object, which a policy reads as context.input.arg0. The run's own input
+// (Temporal::Action::"workflow/GovernedProgram") is recorded as history but not declared: no
+// policy here looks at it.
+namespace Temporal {
+  entity Worker;
+  entity TaskQueue;
+
+  // The workflow run an event belongs to; the event schema pins caller.run.
+  type Caller = {
+    namespace: String,
+    workflowId: String,
+    // "<namespace>/<workflowId>/<runId>"
+    run: String,
+    taskQueue: String,
+  };
+
+  // The tables a query reads and writes, from the verifier's SQL analysis. Missing if the
+  // statement isn't one it can analyze. Tables are named as written, unquoted identifiers
+  // lowercased: "risk.loan_applications", not "loan_applications".
+  type SqlAccess = { reads: Set<String>, writes: Set<String> };
+
+  // run_query({sql}) runs a read-only SQL query against the bank's data.
+  @sql("arg0.sql")
+  action "governed-program-tools/run_query" appliesTo {
+    principal: [Worker], resource: [TaskQueue],
+    context: {
+      input: { parameterCount: Long, arg0?: { sql?: String } },
+      caller: Caller,
+      sql?: SqlAccess,
+    },
+  };
+
+  // send_email({to, subject, body}) sends an email.
+  action "governed-program-tools/send_email" appliesTo {
+    principal: [Worker], resource: [TaskQueue],
+    context: {
+      input: {
+        parameterCount: Long,
+        arg0?: { to?: String, subject?: String, body?: String },
+      },
+      caller: Caller,
+    },
+  };
+}

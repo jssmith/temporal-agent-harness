@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Playpen</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar"></header>
+      <main id="main">
+        <section class="pane" id="pane-agent" data-pane="agent"></section>
+        <div class="col">
+          <section class="pane" id="pane-map" data-pane="map"></section>
+          <section class="pane grow" id="pane-stream" data-pane="stream"></section>
+        </div>
+        <div class="col">
+          <section class="pane grow" id="pane-approvals" data-pane="approvals"></section>
+          <section class="pane grow" id="pane-sandbox" data-pane="sandbox"></section>
+        </div>
+      </main>
+      <section class="pane" id="pane-history" data-pane="history"></section>
+    </div>
+  </body>
+</html>

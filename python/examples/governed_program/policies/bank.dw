@@ -1,0 +1,88 @@
+// Tool policy for the governed-program demo (examples/governed_program): one policy for two
+// runs of the bank's analyst, a Code Mode script and an agent-generated Temporal worker in a
+// sandbox.
+//
+// Adapted from the bank policy of examples/governed_analytics (branch
+// worktree-governed-analytics-demo, policies/bank.dw): the same table tiers, `analytics` open,
+// `risk` for a person to approve, `customer_pii` closed, and the same read-only SELECT rule. What
+// differs is the vocabulary and the decision:
+//
+//   * A tool call is a call to a trusted activity, named "<task queue>/<activity type>" as the
+//     proxy names it, not "bank-analyst/<tool>". The tables a query reads come from Dogwood's
+//     own analysis of the SQL (@sql in schema.cedarschema), not from a check per table.
+//   * A sensitive table is not unlocked by a request_access tool the agent calls, since the
+//     agent could ask for itself. The policy escalates it, the proxy holds the call, and a
+//     person approves it in the console. Once they have, the proxy lets the same call through
+//     for the rest of the run without asking Dogwood again (see the proxy's Escalations).
+//   * Publishing reports and the grant/revoke history rules are not part of this demo.
+//
+// Dogwood denies anything no policy permits; a plain forbid wins over an escalating one. With the
+// proxy's escalation API off, an escalation is a denial.
+// See schema.cedarschema for each action's input, and the README for the demo's beats.
+
+// ---------------------------------------------------------------- queries
+
+// Beat 1: a query over the open analytics tables is allowed.
+@id("query-open-tables")
+permit (principal, action == Temporal::Action::"governed-program-tools/run_query", resource)
+when {
+  context has sql &&
+  context.sql.writes.isEmpty() &&
+  ["analytics.branches", "analytics.branch_deposits"].containsAll(context.sql.reads)
+};
+
+// Beat 3: a risk table needs a person's approval. The query may read analytics tables too.
+@id("risk-tables-need-approval")
+@reason("Risk tables need a person's approval")
+@decision("escalate")
+forbid (principal, action == Temporal::Action::"governed-program-tools/run_query", resource)
+when {
+  context has sql &&
+  ["risk.loan_applications", "risk.credit_scores"].containsAny(context.sql.reads)
+};
+
+// Nothing opens customer data, and a person is never asked.
+@id("customer-pii-is-closed")
+@reason("Customer PII is never available to the analyst")
+forbid (principal, action == Temporal::Action::"governed-program-tools/run_query", resource)
+when {
+  context has sql &&
+  context.sql.reads.contains("customer_pii.customers")
+};
+
+// Only reading: no INSERT, UPDATE or DELETE.
+@id("queries-are-read-only")
+@reason("Queries may only read")
+forbid (principal, action == Temporal::Action::"governed-program-tools/run_query", resource)
+when {
+  context has sql &&
+  !context.sql.writes.isEmpty()
+};
+
+// A statement Dogwood can't analyze (not a SELECT, or one that doesn't parse) has no tables to
+// check, so it doesn't run.
+@id("queries-must-be-analyzable")
+@reason("Only a single SELECT that parses may run, so its tables can be checked")
+forbid (principal, action == Temporal::Action::"governed-program-tools/run_query", resource)
+unless { context has sql };
+
+// ---------------------------------------------------------------- email
+
+// The analyst may email the bank's own people...
+@id("email-inside-the-bank")
+permit (principal, action == Temporal::Action::"governed-program-tools/send_email", resource)
+when {
+  context.input has arg0 &&
+  context.input.arg0 has to &&
+  context.input.arg0.to like "*@bank.example"
+};
+
+// Beat 2: ...and nobody else. An address outside the bank is denied, not escalated.
+@id("no-email-outside-the-bank")
+@reason("Email may only go to bank.example addresses")
+forbid (principal, action == Temporal::Action::"governed-program-tools/send_email", resource)
+unless {
+  context.input has arg0 &&
+  context.input.arg0 has to &&
+  context.input.arg0.to like "*@bank.example"
+};

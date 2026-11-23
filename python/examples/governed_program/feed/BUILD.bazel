@@ -1,0 +1,51 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("//bazel:binary.bzl", "harness_module_binary")
+
+py_library(
+    name = "__init__",
+    srcs = ["__init__.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+)
+
+py_library(
+    name = "fixture",
+    srcs = ["fixture.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = ["@pypi//fastapi"],
+)
+
+harness_module_binary(
+    name = "server",
+    srcs = ["server.py"],
+    data = ["//python/examples/governed_program/ui"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":fixture",
+        ":sources",
+        ":state",
+        "@pypi//fastapi",
+        "@pypi//httpx",
+        "@pypi//uvicorn",
+    ],
+)
+
+py_library(
+    name = "sources",
+    srcs = ["sources.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        "@pypi//httpx",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "state",
+    srcs = ["state.py"],
+    imports = ["../../.."],
+    visibility = ["//python:__subpackages__"],
+)

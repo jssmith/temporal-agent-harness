@@ -1,0 +1,35 @@
+// Dogwood event schema for the temporal-proxy tool-call verifier.
+//
+// A tool call is a `request`, the only decision kind: each one is decided.
+// What the workflow run received (its input, signals, updates, activity and
+// Nexus results) is recorded as `received`, history for later decisions.
+//
+// A tool call whose SQL Dogwood analyzed (an action annotated @sql) also
+// records, unless it was denied, a `read_table` event for each table it read
+// and a `wrote_table` event for each table it wrote, under its own action:
+// history of what the run queried.
+//
+// Every kind pins caller.run to the current request's run. A pin declared on
+// every kind makes every temporal condition key-local: a decision only ever
+// sees its own workflow run's events.
+max_window = 30d
+
+decision event <A>::request {
+    ...inputs(A),
+    caller: { pin run: String = context.caller.run },
+}
+
+event <A>::received {
+    ...inputs(A),
+    caller: { pin run: String = context.caller.run },
+}
+
+event <A>::read_table {
+    table: String,
+    caller: { pin run: String = context.caller.run },
+}
+
+event <A>::wrote_table {
+    table: String,
+    caller: { pin run: String = context.caller.run },
+}
