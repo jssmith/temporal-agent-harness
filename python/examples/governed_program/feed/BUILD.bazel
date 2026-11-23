@@ -1,5 +1,5 @@
 load("@aspect_rules_py//py:defs.bzl", "py_library")
-load("//bazel:binary.bzl", "harness_module_binary")
+load("//bazel:binary.bzl", "agent_kit_module_binary")
 
 py_library(
     name = "__init__",
@@ -16,7 +16,7 @@ py_library(
     deps = ["@pypi//fastapi"],
 )
 
-harness_module_binary(
+agent_kit_module_binary(
     name = "server",
     srcs = ["server.py"],
     data = ["//python/examples/governed_program/ui"],

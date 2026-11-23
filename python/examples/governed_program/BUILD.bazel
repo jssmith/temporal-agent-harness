@@ -1,5 +1,5 @@
 load("@aspect_rules_py//py:defs.bzl", "py_library")
-load("//bazel:binary.bzl", "harness_module_binary")
+load("//bazel:binary.bzl", "agent_kit_module_binary")
 
 # The Dogwood policy, its action schema and its event schema, which the tool-policy verifier loads.
 filegroup(
@@ -43,7 +43,7 @@ py_library(
     deps = [":models"],
 )
 
-harness_module_binary(
+agent_kit_module_binary(
     name = "worker",
     srcs = ["worker.py"],
     imports = ["../.."],
