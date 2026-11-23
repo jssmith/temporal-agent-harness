@@ -1,0 +1,55 @@
+load("//bazel:pytest.bzl", "harness_pytest_test")
+
+harness_pytest_test(
+    name = "test_activities",
+    srcs = ["test_activities.py"],
+    imports = ["../../.."],
+    deps = [
+        "//python/examples/governed_program:activities",
+        "//python/examples/governed_program:models",
+        "//python/examples/governed_program:program",
+        "//python/examples/governed_program:sandbox",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+    ],
+)
+
+harness_pytest_test(
+    name = "test_escalations",
+    srcs = ["test_escalations.py"],
+    imports = ["../../.."],
+    deps = [
+        "//python/examples/governed_program:escalations",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+    ],
+)
+
+harness_pytest_test(
+    name = "test_workflow",
+    srcs = ["test_workflow.py"],
+    imports = ["../../.."],
+    deps = [
+        "//python/examples/governed_program:activities",
+        "//python/examples/governed_program:models",
+        "//python/examples/governed_program:program",
+        "//python/examples/governed_program:sandbox",
+        "//python/examples/governed_program:workflow",
+        "//python/tests:conftest",
+        "@pypi//pytest",
+        "@pypi//pytest_asyncio",
+        "@pypi//temporalio",
+    ],
+)
+
+harness_pytest_test(
+    name = "test_replay",
+    srcs = ["test_replay.py"],
+    data = ["histories/story_run.json"],
+    imports = ["../../.."],
+    deps = [
+        "//python/examples/governed_program:workflow",
+        "//python/tests:conftest",
+        "@pypi//temporalio",
+    ],
+)

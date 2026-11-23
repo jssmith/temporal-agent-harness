@@ -1,0 +1,13 @@
+# The Playpen page: plain ES modules with no build step, served by the feed service
+# (//python/examples/governed_program/feed:server).
+filegroup(
+    name = "ui",
+    srcs = [
+        "app.js",
+        "index.html",
+        "map.js",
+        "style.css",
+        "util.js",
+    ],
+    visibility = ["//python:__subpackages__"],
+)
