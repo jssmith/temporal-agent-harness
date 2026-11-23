@@ -1,6 +1,6 @@
-load("//bazel:pytest.bzl", "harness_pytest_test")
+load("//bazel:pytest.bzl", "agent_kit_pytest_test")
 
-harness_pytest_test(
+agent_kit_pytest_test(
     name = "test_server",
     srcs = ["test_server.py"],
     # The page the server serves; the server binary's own data does not reach its library.
@@ -18,7 +18,7 @@ harness_pytest_test(
     ],
 )
 
-harness_pytest_test(
+agent_kit_pytest_test(
     name = "test_state",
     srcs = ["test_state.py"],
     imports = ["../../../.."],
