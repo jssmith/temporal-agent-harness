@@ -1,0 +1,29 @@
+load("//bazel:pytest.bzl", "harness_pytest_test")
+
+harness_pytest_test(
+    name = "test_server",
+    srcs = ["test_server.py"],
+    # The page the server serves; the server binary's own data does not reach its library.
+    data = ["//python/examples/governed_program/ui"],
+    imports = ["../../../.."],
+    deps = [
+        "//python/examples/governed_program/feed:fixture",
+        "//python/examples/governed_program/feed:server",
+        "//python/examples/governed_program/feed:sources",
+        "//python/tests:conftest",
+        "@pypi//httpx",
+        "@pypi//protobuf",
+        "@pypi//pytest",
+        "@pypi//temporalio",
+    ],
+)
+
+harness_pytest_test(
+    name = "test_state",
+    srcs = ["test_state.py"],
+    imports = ["../../../.."],
+    deps = [
+        "//python/examples/governed_program/feed:state",
+        "//python/tests:conftest",
+    ],
+)
