@@ -1,0 +1,80 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("//bazel:binary.bzl", "agent_kit_module_binary")
+
+# The Dogwood policy, its action schema and its event schema, which the tool-policy verifier loads.
+filegroup(
+    name = "policies",
+    srcs = glob(["policies/*"]),
+    visibility = ["//python:__subpackages__"],
+)
+
+py_library(
+    name = "activities",
+    srcs = ["activities.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":models",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "escalations",
+    srcs = ["escalations.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = ["@pypi//pydantic"],
+)
+
+py_library(
+    name = "models",
+    srcs = ["models.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = ["@pypi//pydantic"],
+)
+
+py_library(
+    name = "program",
+    srcs = ["program.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [":models"],
+)
+
+agent_kit_module_binary(
+    name = "worker",
+    srcs = ["worker.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":activities",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "workflow",
+    srcs = ["workflow.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":activities",
+        ":models",
+        ":sandbox",
+        "@pypi//pydantic",
+        "@pypi//temporalio",
+    ],
+)
+
+py_library(
+    name = "sandbox",
+    srcs = ["sandbox.py"],
+    imports = ["../.."],
+    visibility = ["//python:__subpackages__"],
+    deps = [
+        ":models",
+        "@pypi//temporalio",
+    ],
+)
