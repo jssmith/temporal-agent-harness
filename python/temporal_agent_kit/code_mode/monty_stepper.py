@@ -79,7 +79,6 @@ import errno
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -99,6 +98,7 @@ from temporal_agent_kit.code_mode.vfs import (
     is_write,
     route,
 )
+from temporal_agent_kit.sandbox.protocol import HostCall, Sleep, Step
 
 # Route everything that would make a script depend on the worker to the host.
 OS_POLICY: monty.OSPolicy = {
@@ -155,50 +155,10 @@ _live_pool = _Pool(STEP_TIME_LIMIT_SECS)
 _replay_pool = _Pool(_REPLAY_BACKSTOP_SECS)
 
 
-@dataclass(frozen=True)
-class HostCall:
-    """One async host call the script made, keyed by Monty's call id."""
-
-    call_id: int
-    function_name: str
-    args: list[Any]
-    kwargs: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class Sleep:
-    """An ``await asyncio.sleep(seconds)`` the script made, answered with a durable timer."""
-
-    call_id: int
-    seconds: float
-
-
-# What a step can leave the script blocked on.
+# What a step can leave the script blocked on: the host calls of an awaited batch, or the one
+# file operation the step stopped at. A finished script's ``error`` is a syntax or type error, an
+# uncaught exception, or one of Monty's own limits.
 Awaitable = HostCall | Sleep | FileOp
-
-
-@dataclass(frozen=True)
-class Step:
-    """Where a step left the script: awaiting ``awaiting``, or finished.
-
-    ``awaiting`` is what the next resume needs a result for: the host calls of an awaited
-    batch, or the one file operation the step stopped at. ``started`` are calls the script made
-    during the step that it is not yet awaiting; the driver starts them now and resolves them
-    when a later step awaits them. Every call appears in ``started`` or ``awaiting`` of the step
-    it was made in, and an awaited one may already have been started.
-
-    A finished script has ``output`` (its final value), or ``error`` when it failed: a syntax or
-    type error, an uncaught exception, or one of Monty's own limits. ``aborted`` marks a step
-    the sandbox lost in a way that may not recur on replay, with ``timed_out`` telling the
-    watchdog apart from any other crash of the worker."""
-
-    awaiting: list[Awaitable] = field(default_factory=list)
-    started: list[HostCall | Sleep] = field(default_factory=list)
-    done: bool = False
-    output: Any = None
-    error: str | None = None
-    aborted: bool = False
-    timed_out: bool = False
 
 
 # Answers one of the session's clock / entropy / environment calls: (name, args) -> value.
@@ -212,6 +172,9 @@ class ScriptRun:
     ``answer_os`` answers the session's clock, entropy and environment calls (see
     ``OS_POLICY``) and must be deterministic under replay. File operations on ``mounts`` end the
     step (see :mod:`.vfs`). Not thread-safe; one run per script."""
+
+    timed_out_error = TIMED_OUT_ERROR
+    crashed_error = CRASHED_ERROR
 
     def __init__(
         self,
